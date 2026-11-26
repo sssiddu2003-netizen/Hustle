@@ -121,7 +121,7 @@ hr{border:0;border-top:1px solid var(--line);margin:22px 0}.toolbar{display:flex
 <div class="card"><h3>Financial reports</h3><div class="formgrid"><div><label class="small">From date</label><input id="reportFrom" type="date" onchange="renderReports()"></div><div><label class="small">To date</label><input id="reportTo" type="date" onchange="renderReports()"></div></div>
 <div class="grid"><div><div class="small">Income earned</div><div class="stat" id="rIncome">₹0</div></div><div><div class="small">Farm expenses</div><div class="stat" id="rExpense">₹0</div></div><div><div class="small">Operating profit / loss</div><div class="stat" id="rProfit">₹0</div></div><div><div class="small">Debt payments made</div><div class="stat" id="rDebtPay">₹0</div></div></div><hr><div id="plotReport"></div><hr><div id="categoryReport"></div><button class="action" onclick="exportCSV()">Export transactions CSV</button></div>
 </div>
-<div id="fin-audit" class="finpanel" style="display:none"><div class="card"><h3>Audit trail</h3><p class="mini">Records are added when transactions or loan records are created, edited, deleted or payments are recorded. Entries are append-only inside the app; a person with device/browser storage access could still alter them, so keep dated backups and source bills.</p><div id="auditList"></div><button class="action" onclick="exportAudit()">Export audit CSV</button> <button class="secondary" onclick="removeHarvestingTestHistory()">Remove ₹1,000 test entries</button></div></div>
+<div id="fin-audit" class="finpanel" style="display:none"><div class="card"><h3>Audit trail</h3><p class="mini">Records are added when transactions or loan records are created, edited, deleted or payments are recorded. Entries are append-only inside the app; a person with device/browser storage access could still alter them, so keep dated backups and source bills.</p><div id="auditList"></div><button class="action" onclick="exportAudit()">Export audit CSV</button> <button class="secondary" onclick="removeWeedTestHistory()">Remove Weed test entries</button></div></div>
 </section>
 
 <section id="goals" class="section"><div class="card"><h3>Personal goals</h3><input id="goalInput" placeholder="What do you want to achieve?"><input id="goalDeadline" type="date"><button class="action" onclick="addGoal()">+ Create goal</button><div id="goalList"></div></div></section>
@@ -179,7 +179,29 @@ function renderReports(){if(!document.getElementById("rIncome"))return;const fro
  const plots=["batch1","batch2","both","shared","unassigned"],pb=document.getElementById("plotReport");pb.innerHTML="<h3>Plot-wise totals</h3>";plots.forEach(p=>{const a=list.filter(x=>x.plot===p),i=a.filter(x=>x.type==="income").reduce((s,x)=>s+x.amount,0),e=a.filter(x=>x.type==="expense").reduce((s,x)=>s+x.amount,0);const line=document.createElement("div");line.className="item";line.textContent=plotName(p)+" · Income "+money(i)+" · Expenses "+money(e)+" · Net "+money(i-e);pb.append(line)});
  const cats={};list.filter(x=>x.type==="expense").forEach(x=>cats[x.category]=(cats[x.category]||0)+x.amount);const cb=document.getElementById("categoryReport");cb.innerHTML="<h3>Expense by category</h3>";Object.entries(cats).sort((a,b)=>b[1]-a[1]).forEach(([k,v])=>{const line=document.createElement("div");line.className="item";line.textContent=k+" · "+money(v);cb.append(line)})}
 function renderAudit(){const box=document.getElementById("auditList");if(!box)return;box.innerHTML="";db.auditLog.slice().reverse().slice(0,250).forEach(a=>{const row=document.createElement("div");row.className="item";const d=document.createElement("div");d.innerHTML="<strong>"+esc(a.action)+" · "+esc(a.kind)+"</strong><div class='mini'>"+esc(new Date(a.at).toLocaleString("en-IN"))+" · "+esc(a.details)+"</div><div class='mini'>Record ID: "+esc(a.recordId)+"</div>";row.append(d);box.append(row)});if(!db.auditLog.length)box.innerHTML='<p class="mini">No audit events yet.</p>'}
-function removeHarvestingTestHistory(){const exact="Harvesting labour · ₹1,000";const candidates=db.auditLog.filter(a=>(a.action==="CREATE"||a.action==="DELETE")&&a.kind==="expense"&&a.details===exact);const create=candidates.find(a=>a.action==="CREATE"),del=candidates.find(a=>a.action==="DELETE"&&create&&a.recordId===create.recordId);if(!create||!del){alert("The matching pair of ₹1,000 Harvesting labour test entries was not found. No audit records were changed.");return}if(!confirm("Remove only the two test audit entries for Harvesting labour ₹1,000? No income, expense, loan or other audit records will be changed."))return;const ids=new Set([create.id,del.id]);db.auditLog=db.auditLog.filter(a=>!ids.has(a.id));save();alert("The two matching test audit entries were removed.")}
+function removeWeedTestHistory(){
+ const matches=db.auditLog.filter(a=>{
+  if((a.action!=="CREATE"&&a.action!=="DELETE")||a.kind!=="expense")return false;
+  const parts=String(a.details||"").split(" · ");
+  const description=(parts[0]||"").trim().toLowerCase();
+  const amount=(parts.slice(1).join(" · ")||"").replace(/\s/g,"");
+  return description==="weed" && (amount==="₹1,000"||amount==="₹1000");
+ });
+ const byRecord=new Map();
+ matches.forEach(a=>{if(!byRecord.has(a.recordId))byRecord.set(a.recordId,[]);byRecord.get(a.recordId).push(a)});
+ const pairs=[];
+ byRecord.forEach((events,recordId)=>{
+  const creates=events.filter(a=>a.action==="CREATE");
+  const deletes=events.filter(a=>a.action==="DELETE");
+  if(creates.length===1&&deletes.length===1)pairs.push([creates[0],deletes[0]]);
+ });
+ if(pairs.length!==2){alert("I expected exactly two matching Weed ₹1,000 create/delete pairs, but found "+pairs.length+" complete pair(s). No audit records were changed.");return}
+ if(!confirm("Remove exactly four audit entries: two Weed ₹1,000 expenses created and the same two expenses deleted? All other audit entries and financial records will remain unchanged."))return;
+ const ids=new Set(pairs.flat().map(a=>a.id));
+ db.auditLog=db.auditLog.filter(a=>!ids.has(a.id));
+ save();
+ alert("Removed the four matching Weed ₹1,000 test audit entries. Other records were left unchanged.");
+}
 function exportCSV(){const rows=[["id","type","date","plot","category","description","amount","received","quantity","unit","party","notes"],...db.farmTransactions.map(x=>[x.id,x.type,x.date,x.plot,x.category,x.name,x.amount,x.received??"",x.quantity,x.unit,x.party,x.notes])];downloadText("hustle-transactions-"+today()+".csv",rows.map(r=>r.map(v=>'"'+String(v??"").replace(/"/g,'""')+'"').join(",")).join("\\r\\n"),"text/csv")}
 function exportAudit(){const rows=[["id","timestamp","action","kind","recordId","details"],...db.auditLog.map(x=>[x.id,x.at,x.action,x.kind,x.recordId,x.details])];downloadText("hustle-audit-"+today()+".csv",rows.map(r=>r.map(v=>'"'+String(v??"").replace(/"/g,'""')+'"').join(",")).join("\\r\\n"),"text/csv")}
 function downloadText(name,text,type){const url=URL.createObjectURL(new Blob([text],{type})),a=document.createElement("a");a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}
